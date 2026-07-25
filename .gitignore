@@ -1,0 +1,13 @@
+netcli
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+dist/
+vendor/
+.DS_Store
+Thumbs.db
+*.jsonl
