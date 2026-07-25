@@ -32,16 +32,39 @@ A terminal-based HTTP/HTTPS traffic inspector — the CLI equivalent of Chrome D
 ### Download prebuilt binary
 
 Download the latest release for your platform from the
-[Releases page](https://github.com/xgg-2/netcli/releases), then make it
-executable (Linux/macOS) and move it onto your `PATH`:
+[Releases page](https://github.com/xgg-2/netcli/releases).
 
+Available binaries:
+
+| File | Platform |
+|---|---|
+| `netcli-windows-amd64.exe` | Windows (Intel/AMD 64-bit) |
+| `netcli-macos-amd64` | macOS, Intel-based Mac |
+| `netcli-macos-arm64` | macOS, Apple Silicon (M1/M2/M3/M4) |
+| `netcli-linux-amd64` | Linux (Intel/AMD 64-bit) |
+
+**Not sure which macOS binary you need?** Open Terminal and run:
+```bash
+uname -m
+```
+`arm64` → download `netcli-macos-arm64`. `x86_64` → download `netcli-macos-amd64`.
+
+**Linux/macOS:**
 ```bash
 chmod +x netcli-linux-amd64
 sudo mv netcli-linux-amd64 /usr/local/bin/netcli
 ```
 
-On Windows, download `netcli-windows-amd64.exe`, rename it to `netcli.exe`
-if you like, and run it directly from PowerShell or CMD.
+**Windows:** download `netcli-windows-amd64.exe`, optionally rename it to
+`netcli.exe`, and run it from PowerShell or CMD:
+```powershell
+.\netcli.exe --help
+```
+
+> **Note (Windows):** SmartScreen may show a warning ("Windows protected
+> your PC") since this binary isn't code-signed with a paid certificate.
+> This is expected for open-source binaries distributed this way. Click
+> **More info** → **Run anyway** to proceed.
 
 ### From source
 
