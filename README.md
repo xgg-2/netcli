@@ -1,5 +1,15 @@
 # netcli
 
+```
+ ███╗   ██╗███████╗████████╗ ██████╗██╗     ██╗
+ ████╗  ██║██╔════╝╚══██╔══╝██╔════╝██║     ██║
+ ██╔██╗ ██║█████╗     ██║   ██║     ██║     ██║
+ ██║╚██╗██║██╔══╝     ██║   ██║     ██║     ██║
+ ██║ ╚████║███████╗   ██║   ╚██████╗███████╗██║
+ ╚═╝  ╚═══╝╚══════╝   ╚═╝    ╚═════╝╚══════╝╚═╝
+```
+
+
 A terminal-based HTTP/HTTPS traffic inspector — the CLI equivalent of Chrome DevTools' Network tab. `netcli` runs a local MITM proxy that captures traffic from any application or browser and presents it in a real-time interactive TUI.
 
 > **Legal notice:** This tool is intended for inspecting traffic on applications and systems you own or have explicit permission to test. Do not use it to intercept traffic without authorization.

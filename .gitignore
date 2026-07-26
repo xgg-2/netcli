@@ -11,3 +11,8 @@ vendor/
 .DS_Store
 Thumbs.db
 *.jsonl
+netcli
+netcli-linux-amd64
+netcli-macos-amd64
+netcli-macos-arm64
+netcli-windows-amd64.exe
