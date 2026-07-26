@@ -2,11 +2,16 @@ package proxy
 
 import (
 	"bytes"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	gomitmproxy "github.com/lqqyt2423/go-mitmproxy/proxy"
+	"github.com/sirupsen/logrus"
+	"github.com/xgg-2/netcli/internal/cert"
 	"github.com/xgg-2/netcli/internal/types"
 )
 
@@ -105,6 +110,8 @@ func Start(cfg *Config) error {
 		config:  cfg,
 	}
 
+	redirectInternalLogging()
+
 	opts := &gomitmproxy.Options{
 		Addr:        cfg.Addr,
 		CaRootPath:  cfg.CaRootDir,
@@ -118,6 +125,25 @@ func Start(cfg *Config) error {
 
 	p.AddAddon(addon)
 	return p.Start()
+}
+
+func redirectInternalLogging() {
+	dir, err := cert.ConfigDir()
+	if err != nil {
+		logrus.SetOutput(io.Discard)
+		return
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		logrus.SetOutput(io.Discard)
+		return
+	}
+	logPath := filepath.Join(dir, "proxy.log")
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		logrus.SetOutput(io.Discard)
+		return
+	}
+	logrus.SetOutput(f)
 }
 
 func isBinaryContent(contentType string, body []byte) bool {
