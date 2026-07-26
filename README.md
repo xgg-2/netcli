@@ -13,9 +13,10 @@ A terminal-based HTTP/HTTPS traffic inspector — the CLI equivalent of Chrome D
 - Color-coded methods (GET/POST/PUT/DELETE) and status codes (2xx/3xx/4xx/5xx)
 - Full request and response headers and bodies in the detail panel
 - JSON bodies are pretty-printed automatically
-- Live filter by host or path substring (`/` key)
-- Export any request as a `curl` command to clipboard or stdout
-- Save sessions to JSONL files for offline analysis
+- Live filter by host or path substring, or by resource type (`/` key)
+- Export any request as `curl`, JavaScript `fetch`, Axios, Python `requests`, or Go `net/http` code (`e` key)
+- Copy the response body to the clipboard, pretty-printed if JSON (`y` key)
+- Save sessions to JSONL for offline analysis, or export as HAR for compatibility with Chrome DevTools, Postman, and Charles (`s` / `h` keys)
 - Single binary, no runtime dependencies
 
 ---
@@ -32,39 +33,16 @@ A terminal-based HTTP/HTTPS traffic inspector — the CLI equivalent of Chrome D
 ### Download prebuilt binary
 
 Download the latest release for your platform from the
-[Releases page](https://github.com/xgg-2/netcli/releases).
+[Releases page](https://github.com/xgg-2/netcli/releases), then make it
+executable (Linux/macOS) and move it onto your `PATH`:
 
-Available binaries:
-
-| File | Platform |
-|---|---|
-| `netcli-windows-amd64.exe` | Windows (Intel/AMD 64-bit) |
-| `netcli-macos-amd64` | macOS, Intel-based Mac |
-| `netcli-macos-arm64` | macOS, Apple Silicon (M1/M2/M3/M4) |
-| `netcli-linux-amd64` | Linux (Intel/AMD 64-bit) |
-
-**Not sure which macOS binary you need?** Open Terminal and run:
-```bash
-uname -m
-```
-`arm64` → download `netcli-macos-arm64`. `x86_64` → download `netcli-macos-amd64`.
-
-**Linux/macOS:**
 ```bash
 chmod +x netcli-linux-amd64
 sudo mv netcli-linux-amd64 /usr/local/bin/netcli
 ```
 
-**Windows:** download `netcli-windows-amd64.exe`, optionally rename it to
-`netcli.exe`, and run it from PowerShell or CMD:
-```powershell
-.\netcli.exe --help
-```
-
-> **Note (Windows):** SmartScreen may show a warning ("Windows protected
-> your PC") since this binary isn't code-signed with a paid certificate.
-> This is expected for open-source binaries distributed this way. Click
-> **More info** → **Run anyway** to proceed.
+On Windows, download `netcli-windows-amd64.exe`, rename it to `netcli.exe`
+if you like, and run it directly from PowerShell or CMD.
 
 ### From source
 
@@ -140,10 +118,11 @@ Configure your browser or application to use `http://localhost:8080` as its HTTP
 
 Options:
 ```
---port int      proxy listen port (default 8080)
---bind string   IP address to bind the proxy listener to (default "127.0.0.1")
---filter string show only requests matching this domain or path substring
---save string   append captured traffic to a JSONL file
+--port int           proxy listen port (default 8080)
+--bind string        IP address to bind the proxy listener to (default "127.0.0.1")
+--filter string      show only requests matching this domain or path substring
+--save string        append captured traffic to a JSONL file
+--system-proxy       configure the Windows system proxy automatically (Windows only)
 ```
 
 By default the proxy binds to `127.0.0.1` (loopback only). To proxy traffic
@@ -155,6 +134,35 @@ netcli watch --bind 0.0.0.0 --port 8080
 
 > **Note:** Exposing the proxy on `0.0.0.0` allows any machine on the local
 > network to route traffic through it. Only do this on a trusted network.
+
+#### Windows: automatic system proxy (`--system-proxy`)
+
+On Windows, pass `--system-proxy` to have netcli configure the system proxy
+automatically rather than requiring manual registry or Settings edits:
+
+```bash
+netcli watch --system-proxy
+```
+
+On startup, netcli reads and stores the current `ProxyEnable` and `ProxyServer`
+registry values under `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet
+Settings`, sets the system proxy to `127.0.0.1:<port>`, and broadcasts the change
+so running applications (browsers, apps using WinINet) pick it up immediately. On
+exit — whether via `q`, Ctrl+C, or console window close — the original values are
+restored and the change is broadcast again.
+
+If netcli exits unexpectedly (power loss, system freeze, forced kill) without
+restoring the proxy, run the standalone safety-net command at any time:
+
+```bash
+netcli restore-proxy
+```
+
+This sets `ProxyEnable` to `0` and broadcasts the change, disabling the system
+proxy without needing to know the previous value or open Windows Settings manually.
+
+On non-Windows platforms `--system-proxy` prints an informational message and
+continues running normally. `netcli restore-proxy` exits cleanly without error.
 
 Examples:
 ```bash
@@ -169,6 +177,12 @@ netcli watch --port 9090 --filter stripe.com --save stripe-session.jsonl
 
 # Expose proxy to other devices on the local network
 netcli watch --bind 0.0.0.0 --port 8080
+
+# Windows: configure system proxy automatically
+netcli watch --system-proxy
+
+# Windows: manual safety net if proxy was not restored on exit
+netcli restore-proxy
 ```
 
 ### Scope traffic to a single process
@@ -193,17 +207,66 @@ netcli cert-info
 
 ## TUI keybindings
 
-| Key           | Action                                              |
-|---------------|-----------------------------------------------------|
-| `↑` / `↓`    | Navigate the request list                           |
-| `PgUp/PgDn`  | Scroll by page                                      |
-| `/`           | Open live filter (filters all requests by host/path)|
-| `Esc`         | Close filter or save input                          |
-| `s`           | Save session (prompts for filename if no `--save`)  |
-| `e`           | Export selected request as curl command              |
-| `q`           | Quit                                                 |
+| Key           | Action                                                       |
+|---------------|--------------------------------------------------------------|
+| `↑` / `↓`    | Navigate the request list                                    |
+| `PgUp/PgDn`  | Scroll by page                                               |
+| `/`           | Open live filter (host/path substring or `type:` prefix)     |
+| `Esc`         | Close filter, save, export, or HAR input                     |
+| `s`           | Save session to JSONL (prompts for filename if no `--save`)  |
+| `e`           | Open export menu: curl, fetch, Axios, Python requests, Go    |
+| `y`           | Copy the selected request's response body to the clipboard   |
+| `h`           | Export the current (filtered) session as a HAR file          |
+| `q`           | Quit                                                          |
 
 The detail panel scrolls with the mouse wheel when focused.
+
+### Filter syntax
+
+Press `/` to open the filter input. Filters apply to all existing and incoming requests.
+
+**Substring filter** — matches host and path:
+```
+api.example.com
+/v1/users
+```
+
+**Type filter** — matches resource classification based on response `Content-Type` and request headers:
+
+| Filter value | Matches |
+|---|---|
+| `type:xhr` | JSON responses, `X-Requested-With: XMLHttpRequest`, `Sec-Fetch-Mode: cors` |
+| `type:doc` | `text/html` |
+| `type:js` | `application/javascript`, `text/javascript` |
+| `type:css` | `text/css` |
+| `type:img` | `image/*` |
+| `type:font` | `font/*`, `application/font-*`, `application/vnd.ms-fontobject` |
+| `type:media` | `audio/*`, `video/*` |
+| `type:other` | anything not matched above |
+
+**Combined** — `type:` and substring are ANDed:
+```
+type:xhr api.example.com
+type:img cdn.
+```
+
+The resource type is shown as a short color-coded tag in the request list when terminal width allows (38% left panel ≥ 42 columns).
+
+---
+
+## Code export
+
+Press `e` on a selected request to open the export menu, then pick a format with the arrow keys and `Enter`, or type its number directly:
+
+1. `curl`
+2. JavaScript `fetch`
+3. Axios
+4. Python `requests`
+5. Go `net/http`
+
+The generated code is copied to the clipboard, or printed to the terminal if clipboard access is unavailable. In both cases a warning is shown that the output may contain authorization headers, cookies, or tokens from the captured request.
+
+Press `y` to copy just the response body of the selected request to the clipboard (pretty-printed if it is JSON), with no credentials warning since this is response data rather than request headers.
 
 ---
 
@@ -232,6 +295,12 @@ Binary bodies are base64-encoded and prefixed with `base64:`.
 > but treat them as secrets — do not commit them to git or share them
 > without redacting sensitive fields first.
 
+### HAR export
+
+Press `h` to export the current session (respecting any active filter, including `type:` filters) as a HAR 1.2 file. You will be prompted for a filename, defaulting to `session.har` if left blank.
+
+HAR is a standard format supported by Chrome DevTools, Postman, Charles, and most other HTTP debugging tools, making it a good choice when you need to hand off a captured session to a tool other than `netcli`. This is independent of JSONL export — either or both can be used for the same session.
+
 ---
 
 ## Project structure
@@ -244,18 +313,22 @@ netcli/
 ├── cmd/
 │   ├── root.go              cobra root command
 │   ├── setup.go             netcli setup
-│   ├── watch.go             netcli watch
-│   ├── run.go                netcli run
-│   └── certinfo.go          netcli cert-info
+│   ├── watch.go             netcli watch (--system-proxy flag)
+│   ├── run.go               netcli run
+│   ├── certinfo.go          netcli cert-info
+│   └── restoreproxy.go      netcli restore-proxy
 └── internal/
-    ├── types/types.go        shared RequestEntry struct
+    ├── types/types.go        RequestEntry struct, ResourceType, ClassifyResourceType
     ├── cert/cert.go          CA generation and path management
     ├── proxy/proxy.go        go-mitmproxy addon and Start()
     ├── export/jsonl.go       JSONL file writer
+    ├── sysproxy/
+    │   ├── windows.go        Windows registry proxy control (build tag: windows)
+    │   └── noop.go           no-op stubs for non-Windows platforms
     └── tui/
-        ├── model.go          bubbletea model and Init
-        ├── update.go         Update (keyboard handling, state transitions)
-        ├── view.go           View (rendering, layout, curl export)
+        ├── model.go          bubbletea model, Init, batched entry buffering
+        ├── update.go         Update (keyboard handling, tick batching, state transitions)
+        ├── view.go           View (rendering, type tags, responsive columns)
         └── styles.go         lipgloss color and style definitions
 ```
 

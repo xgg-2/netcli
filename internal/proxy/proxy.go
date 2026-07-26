@@ -88,6 +88,10 @@ func (a *inspectorAddon) Response(f *gomitmproxy.Flow) {
 	p.entry.IsBinaryResponse = isBinary
 	p.entry.DurationMs = float64(time.Since(p.startTime).Milliseconds())
 	p.entry.Complete = true
+	p.entry.ResourceType = types.ClassifyResourceType(
+		f.Response.Header.Get("Content-Type"),
+		p.entry.RequestHeaders,
+	)
 
 	select {
 	case a.config.EntryChan <- p.entry:

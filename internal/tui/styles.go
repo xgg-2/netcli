@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
+	"github.com/xgg-2/netcli/internal/types"
+)
 
 var (
 	colorBlue   = lipgloss.Color("#5C9CF5")
@@ -14,6 +17,8 @@ var (
 	colorBgAlt  = lipgloss.Color("#1F2937")
 	colorBorder = lipgloss.Color("#374151")
 	colorAccent = lipgloss.Color("#818CF8")
+	colorTeal   = lipgloss.Color("#2DD4BF")
+	colorPink   = lipgloss.Color("#F472B6")
 
 	styleBase = lipgloss.NewStyle().
 			Background(colorBg).
@@ -56,6 +61,11 @@ var (
 			Foreground(colorGreen).
 			Padding(0, 1)
 
+	styleExportPrompt = lipgloss.NewStyle().
+				Background(colorBgAlt).
+				Foreground(colorTeal).
+				Padding(0, 1)
+
 	styleError = lipgloss.NewStyle().
 			Foreground(colorRed)
 
@@ -87,6 +97,28 @@ func statusColor(code int) lipgloss.Style {
 	case code >= 300 && code < 400:
 		return base.Foreground(colorYellow)
 	case code >= 400:
+		return base.Foreground(colorRed)
+	default:
+		return base.Foreground(colorGray)
+	}
+}
+
+func typeColor(rt types.ResourceType) lipgloss.Style {
+	base := lipgloss.NewStyle()
+	switch rt {
+	case types.TypeXHR:
+		return base.Foreground(colorYellow)
+	case types.TypeDoc:
+		return base.Foreground(colorBlue)
+	case types.TypeJS:
+		return base.Foreground(colorOrange)
+	case types.TypeCSS:
+		return base.Foreground(colorTeal)
+	case types.TypeImg:
+		return base.Foreground(colorPink)
+	case types.TypeFont:
+		return base.Foreground(colorAccent)
+	case types.TypeMedia:
 		return base.Foreground(colorRed)
 	default:
 		return base.Foreground(colorGray)

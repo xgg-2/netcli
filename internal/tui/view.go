@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/xgg-2/netcli/internal/export"
 	"github.com/xgg-2/netcli/internal/types"
 )
 
@@ -43,6 +44,10 @@ func (m *model) View() string {
 		parts = append(parts, styleFilter.Render("Filter: ")+m.filterInput.View())
 	} else if m.saveMode {
 		parts = append(parts, styleSavePrompt.Render("Save to: ")+m.saveInput.View())
+	} else if m.exportMode {
+		parts = append(parts, styleExportPrompt.Render("Export as: ")+renderExportMenu(m.exportSelected))
+	} else if m.harMode {
+		parts = append(parts, styleSavePrompt.Render("HAR file: ")+m.harInput.View())
 	}
 
 	if m.statusMsg != "" {
@@ -57,12 +62,16 @@ func (m *model) View() string {
 	return strings.Join(parts, "\n")
 }
 
+func showTypeTag(listWidth int) bool {
+	const methodW, statusW, timeW, typeW, minHostPath = 8, 7, 7, 5, 15
+	return listWidth-methodW-statusW-timeW-typeW >= minHostPath
+}
+
 func (m *model) buildList(width, height int) string {
 	lines := make([]string, 0, height)
 
-	header := styleHeader.Width(width).Render(
-		padRight("Method", 8) + padRight("Status", 7) + padRight("ms", 7) + "Host + Path",
-	)
+	withType := showTypeTag(width)
+	header := m.buildListHeader(width, withType)
 	lines = append(lines, header)
 
 	visibleCount := height - 1
@@ -77,17 +86,37 @@ func (m *model) buildList(width, height int) string {
 			continue
 		}
 		e := m.filtered[idx]
-		lines = append(lines, m.renderRow(e, width, idx == m.selected))
+		lines = append(lines, m.renderRow(e, width, idx == m.selected, withType))
 	}
 
 	return strings.Join(lines, "\n")
 }
 
-func (m *model) renderRow(e *types.RequestEntry, width int, selected bool) string {
-	methodW := 8
-	statusW := 7
-	timeW := 7
+func (m *model) buildListHeader(width int, withType bool) string {
+	const methodW, statusW, timeW, typeW = 8, 7, 7, 5
 	hostPathW := width - methodW - statusW - timeW
+	if withType {
+		hostPathW -= typeW
+	}
+	if hostPathW < 8 {
+		hostPathW = 8
+	}
+
+	h := padRight("Method", methodW) + padRight("Status", statusW) + padRight("ms", timeW)
+	if withType {
+		h += padRight("Type", typeW)
+	}
+	h += "Host + Path"
+	return styleHeader.Width(width).Render(h)
+}
+
+func (m *model) renderRow(e *types.RequestEntry, width int, selected bool, withType bool) string {
+	const methodW, statusW, timeW, typeW = 8, 7, 7, 5
+
+	hostPathW := width - methodW - statusW - timeW
+	if withType {
+		hostPathW -= typeW
+	}
 	if hostPathW < 8 {
 		hostPathW = 8
 	}
@@ -105,21 +134,34 @@ func (m *model) renderRow(e *types.RequestEntry, width int, selected bool) strin
 
 	hostPath := truncate(e.Host+e.DisplayPath(), hostPathW)
 
-	var row string
-	if selected {
-		row = styleSelectedRow.Width(width).Render(method + statusStr + timeStr + hostPath)
-	} else {
-		methodStyled := methodColor(e.Method).Render(padRight(e.Method, methodW))
-		var statusStyled string
-		if e.Complete {
-			statusStyled = statusColor(e.StatusCode).Render(statusStr)
-		} else {
-			statusStyled = lipgloss.NewStyle().Foreground(colorGray).Render(statusStr)
-		}
-		timeStyled := lipgloss.NewStyle().Foreground(colorGray).Render(timeStr)
-		row = methodStyled + statusStyled + timeStyled + hostPath
+	var typeStr string
+	if withType {
+		typeStr = padRight(typeAbbrev(e.ResourceType), typeW)
 	}
 
+	if selected {
+		row := method + statusStr + timeStr
+		if withType {
+			row += typeStr
+		}
+		row += hostPath
+		return styleSelectedRow.Width(width).Render(row)
+	}
+
+	methodStyled := methodColor(e.Method).Render(padRight(e.Method, methodW))
+	var statusStyled string
+	if e.Complete {
+		statusStyled = statusColor(e.StatusCode).Render(statusStr)
+	} else {
+		statusStyled = lipgloss.NewStyle().Foreground(colorGray).Render(statusStr)
+	}
+	timeStyled := lipgloss.NewStyle().Foreground(colorGray).Render(timeStr)
+
+	row := methodStyled + statusStyled + timeStyled
+	if withType {
+		row += typeColor(e.ResourceType).Render(typeStr)
+	}
+	row += hostPath
 	return row
 }
 
@@ -152,7 +194,8 @@ func (m *model) buildDetailContent() string {
 	b.WriteString(styleSectionHeader.Render("Request") + "\n")
 	b.WriteString(label("URL:    ") + e.URL + "\n")
 	b.WriteString(label("Method: ") + methodColor(e.Method).Render(e.Method) + "\n")
-	b.WriteString(label("Time:   ") + e.Timestamp.Format("15:04:05.000") + "\n\n")
+	b.WriteString(label("Time:   ") + e.Timestamp.Format("15:04:05.000") + "\n")
+	b.WriteString(label("Type:   ") + typeColor(e.ResourceType).Render(string(e.ResourceType)) + "\n\n")
 
 	b.WriteString(styleSectionHeader.Render("Request Headers") + "\n")
 	for k, vals := range e.RequestHeaders {
@@ -197,7 +240,9 @@ func (m *model) buildFooter() string {
 		bind("arrows", "navigate"),
 		bind("/", "filter"),
 		bind("s", "save"),
-		bind("e", "curl"),
+		bind("e", "export"),
+		bind("y", "copy resp"),
+		bind("h", "har"),
 		bind("q", "quit"),
 	}
 	if len(m.filtered) > 0 {
@@ -239,19 +284,58 @@ func isJSONLike(s string) bool {
 	return strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[")
 }
 
-func buildCurlCommand(e *types.RequestEntry) string {
-	var b strings.Builder
-	b.WriteString("curl -X " + e.Method + " \\\n  '" + e.URL + "'")
-	for k, vals := range e.RequestHeaders {
-		for _, v := range vals {
-			b.WriteString(fmt.Sprintf(" \\\n  -H '%s: %s'", k, v))
+func renderExportMenu(selected int) string {
+	var parts []string
+	for i, f := range export.Formats {
+		label := fmt.Sprintf("%d:%s", i+1, f)
+		if i == selected {
+			parts = append(parts, styleSelectedRow.Render(label))
+		} else {
+			parts = append(parts, styleFooter.Render(label))
 		}
 	}
-	if len(e.RequestBody) > 0 && !e.IsBinaryRequest {
-		escaped := strings.ReplaceAll(string(e.RequestBody), "'", "'\\''")
-		b.WriteString(" \\\n  --data '" + escaped + "'")
+	return strings.Join(parts, "  ")
+}
+
+func plainResponseBody(e *types.RequestEntry) string {
+	if e.IsBinaryResponse {
+		return fmt.Sprintf("[binary data — %d bytes, content-type: %s]", len(e.ResponseBody), e.ResponseHeaders.Get("Content-Type"))
 	}
-	return b.String()
+	if len(e.ResponseBody) == 0 {
+		return ""
+	}
+	text := string(e.ResponseBody)
+	ct := e.ResponseHeaders.Get("Content-Type")
+	if strings.Contains(ct, "application/json") || isJSONLike(text) {
+		var v interface{}
+		if err := json.Unmarshal(e.ResponseBody, &v); err == nil {
+			if pretty, err := json.MarshalIndent(v, "", "  "); err == nil {
+				return string(pretty)
+			}
+		}
+	}
+	return text
+}
+
+func typeAbbrev(rt types.ResourceType) string {
+	switch rt {
+	case types.TypeDoc:
+		return "doc"
+	case types.TypeXHR:
+		return "xhr"
+	case types.TypeJS:
+		return "js"
+	case types.TypeCSS:
+		return "css"
+	case types.TypeImg:
+		return "img"
+	case types.TypeFont:
+		return "font"
+	case types.TypeMedia:
+		return "mdia"
+	default:
+		return "othr"
+	}
 }
 
 func padRight(s string, n int) string {

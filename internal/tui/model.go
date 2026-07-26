@@ -16,6 +16,8 @@ type newEntryMsg struct {
 	entry *types.RequestEntry
 }
 
+type tickMsg time.Time
+
 type statusMsg struct {
 	text  string
 	isErr bool
@@ -24,34 +26,43 @@ type statusMsg struct {
 type clearStatusMsg struct{}
 
 type model struct {
-	entries       []*types.RequestEntry
-	filtered      []*types.RequestEntry
-	selected      int
-	listOffset    int
-	filterMode    bool
-	filterInput   textinput.Model
-	saveMode      bool
-	saveInput     textinput.Model
-	savePath      string
-	exporter      *export.Writer
-	viewport      viewport.Model
-	width         int
-	height        int
-	ready         bool
-	entryChan     <-chan *types.RequestEntry
-	statusMsg     string
-	statusIsErr   bool
-	statusExpires time.Time
+	entries        []*types.RequestEntry
+	pendingEntries []*types.RequestEntry
+	filtered       []*types.RequestEntry
+	selected       int
+	listOffset     int
+	filterMode     bool
+	filterInput    textinput.Model
+	saveMode       bool
+	saveInput      textinput.Model
+	savePath       string
+	exporter       *export.Writer
+	exportMode     bool
+	exportSelected int
+	harMode        bool
+	harInput       textinput.Model
+	viewport       viewport.Model
+	width          int
+	height         int
+	ready          bool
+	entryChan      <-chan *types.RequestEntry
+	statusMsg      string
+	statusIsErr    bool
+	statusExpires  time.Time
 }
 
 func NewModel(entryChan <-chan *types.RequestEntry, savePath string) (*model, error) {
 	fi := textinput.New()
-	fi.Placeholder = "filter by host or path..."
+	fi.Placeholder = "filter by host/path or type:xhr type:img ..."
 	fi.CharLimit = 200
 
 	si := textinput.New()
 	si.Placeholder = "filename (e.g. session.jsonl)"
 	si.CharLimit = 256
+
+	hi := textinput.New()
+	hi.Placeholder = "filename (e.g. session.har)"
+	hi.CharLimit = 256
 
 	var exp *export.Writer
 	if savePath != "" {
@@ -63,20 +74,25 @@ func NewModel(entryChan <-chan *types.RequestEntry, savePath string) (*model, er
 	}
 
 	return &model{
-		entries:   make([]*types.RequestEntry, 0, 64),
-		filtered:  make([]*types.RequestEntry, 0, 64),
-		filterMode: false,
-		filterInput: fi,
-		saveMode:    false,
-		saveInput:   si,
-		savePath:    savePath,
-		exporter:    exp,
-		entryChan:   entryChan,
+		entries:        make([]*types.RequestEntry, 0, 64),
+		pendingEntries: make([]*types.RequestEntry, 0, 64),
+		filtered:       make([]*types.RequestEntry, 0, 64),
+		filterMode:     false,
+		filterInput:    fi,
+		saveMode:       false,
+		saveInput:      si,
+		savePath:       savePath,
+		exporter:       exp,
+		harInput:       hi,
+		entryChan:      entryChan,
 	}, nil
 }
 
 func (m *model) Init() tea.Cmd {
-	return waitForEntry(m.entryChan)
+	return tea.Batch(
+		waitForEntry(m.entryChan),
+		scheduleTick(),
+	)
 }
 
 func waitForEntry(ch <-chan *types.RequestEntry) tea.Cmd {
@@ -86,6 +102,12 @@ func waitForEntry(ch <-chan *types.RequestEntry) tea.Cmd {
 	}
 }
 
+func scheduleTick() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
+}
+
 func scheduleStatusClear(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(_ time.Time) tea.Msg {
 		return clearStatusMsg{}
@@ -93,18 +115,36 @@ func scheduleStatusClear(d time.Duration) tea.Cmd {
 }
 
 func (m *model) applyFilter() {
-	f := strings.ToLower(m.filterInput.Value())
-	if f == "" {
+	raw := strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
+	if raw == "" {
 		m.filtered = m.entries
 		return
 	}
+
+	var typeFilter string
+	var textParts []string
+	for _, part := range strings.Fields(raw) {
+		if strings.HasPrefix(part, "type:") {
+			typeFilter = strings.TrimPrefix(part, "type:")
+		} else {
+			textParts = append(textParts, part)
+		}
+	}
+	textFilter := strings.Join(textParts, " ")
+
 	result := make([]*types.RequestEntry, 0, len(m.entries))
 	for _, e := range m.entries {
-		host := strings.ToLower(e.Host)
-		path := strings.ToLower(e.Path)
-		if strings.Contains(host, f) || strings.Contains(path, f) {
-			result = append(result, e)
+		if typeFilter != "" && string(e.ResourceType) != typeFilter {
+			continue
 		}
+		if textFilter != "" {
+			host := strings.ToLower(e.Host)
+			path := strings.ToLower(e.Path)
+			if !strings.Contains(host, textFilter) && !strings.Contains(path, textFilter) {
+				continue
+			}
+		}
+		result = append(result, e)
 	}
 	m.filtered = result
 }
@@ -125,7 +165,7 @@ func (m *model) clampSelected() {
 
 func (m *model) listHeight() int {
 	reserved := 2
-	if m.filterMode || m.saveMode {
+	if m.filterMode || m.saveMode || m.exportMode || m.harMode {
 		reserved = 3
 	}
 	if m.statusMsg != "" {

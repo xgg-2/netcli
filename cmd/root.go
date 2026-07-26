@@ -25,4 +25,5 @@ func init() {
 	rootCmd.AddCommand(watchCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(certInfoCmd)
+	rootCmd.AddCommand(restoreProxyCmd)
 }

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/atotto/clipboard"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/xgg-2/netcli/internal/export"
 )
 
@@ -19,27 +19,34 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		lh := m.listHeight()
 		rightW := m.rightWidth()
-		detailH := m.listHeight() - 1
-		if detailH < 1 {
-			detailH = 1
-		}
 		if !m.ready {
-			m.viewport = viewport.New(rightW, detailH)
+			m.viewport = viewport.New(rightW, lh)
 			m.ready = true
 		} else {
 			m.viewport.Width = rightW
-			m.viewport.Height = detailH
+			m.viewport.Height = lh
 		}
 		m.refreshViewport()
 
 	case newEntryMsg:
-		m.entries = append(m.entries, msg.entry)
-		m.applyFilter()
+		m.pendingEntries = append(m.pendingEntries, msg.entry)
 		if m.exporter != nil && msg.entry.Complete {
 			_ = m.exporter.Write(m.exporterEntry(msg.entry))
 		}
 		cmds = append(cmds, waitForEntry(m.entryChan))
+
+	case tickMsg:
+		if len(m.pendingEntries) > 0 {
+			m.entries = append(m.entries, m.pendingEntries...)
+			m.pendingEntries = m.pendingEntries[:0]
+			m.applyFilter()
+			m.clampSelected()
+			m.updateListScroll()
+			m.refreshViewport()
+		}
+		cmds = append(cmds, scheduleTick())
 
 	case statusMsg:
 		m.statusMsg = msg.text
@@ -54,8 +61,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.saveMode {
 			return m.handleSaveInput(msg, cmds)
 		}
+		if m.harMode {
+			return m.handleHarInput(msg, cmds)
+		}
 		if m.filterMode {
 			return m.handleFilterInput(msg, cmds)
+		}
+		if m.exportMode {
+			return m.handleExportInput(msg, cmds)
 		}
 		return m.handleNormalKey(msg, cmds)
 	}
@@ -128,7 +141,23 @@ func (m *model) handleNormalKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.
 		}
 
 	case "e":
-		cmds = append(cmds, m.exportCurl())
+		if len(m.filtered) == 0 || m.selected >= len(m.filtered) {
+			cmds = append(cmds, func() tea.Msg {
+				return statusMsg{text: "no request selected", isErr: true}
+			})
+		} else {
+			m.exportMode = true
+			m.exportSelected = 0
+		}
+
+	case "y":
+		cmds = append(cmds, m.copyResponseBody())
+
+	case "h":
+		m.harMode = true
+		m.harInput.SetValue("")
+		m.harInput.Focus()
+		cmds = append(cmds, m.harInput.Focus())
 	}
 
 	return m, tea.Batch(cmds...)
@@ -223,21 +252,115 @@ func (m *model) saveAllTo(path string) tea.Cmd {
 	}
 }
 
-func (m *model) exportCurl() tea.Cmd {
+func (m *model) handleExportInput(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.exportMode = false
+		return m, tea.Batch(cmds...)
+
+	case "up", "k":
+		if m.exportSelected > 0 {
+			m.exportSelected--
+		}
+		return m, tea.Batch(cmds...)
+
+	case "down", "j":
+		if m.exportSelected < len(export.Formats)-1 {
+			m.exportSelected++
+		}
+		return m, tea.Batch(cmds...)
+
+	case "enter":
+		format := export.Formats[m.exportSelected]
+		m.exportMode = false
+		cmds = append(cmds, m.doExport(format))
+		return m, tea.Batch(cmds...)
+
+	case "1", "2", "3", "4", "5":
+		idx := int(msg.String()[0] - '1')
+		if idx >= 0 && idx < len(export.Formats) {
+			format := export.Formats[idx]
+			m.exportMode = false
+			cmds = append(cmds, m.doExport(format))
+		}
+		return m, tea.Batch(cmds...)
+	}
+	return m, tea.Batch(cmds...)
+}
+
+func (m *model) handleHarInput(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.harMode = false
+		m.harInput.Blur()
+		return m, tea.Batch(cmds...)
+
+	case "enter":
+		m.harMode = false
+		m.harInput.Blur()
+		path := strings.TrimSpace(m.harInput.Value())
+		if path == "" {
+			path = "session.har"
+		}
+		if !strings.HasSuffix(path, ".har") {
+			path += ".har"
+		}
+		cmds = append(cmds, m.exportHAR(path))
+		return m, tea.Batch(cmds...)
+
+	default:
+		var cmd tea.Cmd
+		m.harInput, cmd = m.harInput.Update(msg)
+		cmds = append(cmds, cmd)
+		return m, tea.Batch(cmds...)
+	}
+}
+
+func (m *model) doExport(format string) tea.Cmd {
 	if len(m.filtered) == 0 || m.selected >= len(m.filtered) {
 		return func() tea.Msg {
 			return statusMsg{text: "no request selected", isErr: true}
 		}
 	}
 	entry := m.filtered[m.selected]
-	cmd := buildCurlCommand(entry)
+	code := export.GenerateCode(format, entry)
 	return func() tea.Msg {
-		err := clipboard.WriteAll(cmd)
+		err := clipboard.WriteAll(code)
 		if err != nil {
-			_, _ = fmt.Fprintf(os.Stdout, "\nWARNING: curl command below may contain auth headers, cookies, or tokens\n%s\n", cmd)
-			return statusMsg{text: "curl printed to terminal (clipboard unavailable) — may contain credentials"}
+			_, _ = fmt.Fprintf(os.Stdout, "\nWARNING: %s output below may contain auth headers, cookies, or tokens\n%s\n", format, code)
+			return statusMsg{text: fmt.Sprintf("%s printed to terminal (clipboard unavailable) — may contain credentials", format)}
 		}
-		return statusMsg{text: "curl copied to clipboard — command may contain auth headers/cookies"}
+		return statusMsg{text: fmt.Sprintf("%s copied to clipboard — may contain auth headers/cookies", format)}
+	}
+}
+
+func (m *model) copyResponseBody() tea.Cmd {
+	if len(m.filtered) == 0 || m.selected >= len(m.filtered) {
+		return nil
+	}
+	entry := m.filtered[m.selected]
+	if !entry.Complete {
+		return nil
+	}
+	text := plainResponseBody(entry)
+	return func() tea.Msg {
+		err := clipboard.WriteAll(text)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stdout, "\n%s\n", text)
+			return statusMsg{text: "response body printed to terminal (clipboard unavailable)"}
+		}
+		return statusMsg{text: "response body copied to clipboard"}
+	}
+}
+
+func (m *model) exportHAR(path string) tea.Cmd {
+	entries := m.filtered
+	return func() tea.Msg {
+		count, err := export.WriteHAR(path, entries)
+		if err != nil {
+			return statusMsg{text: fmt.Sprintf("HAR export failed: %v", err), isErr: true}
+		}
+		return statusMsg{text: fmt.Sprintf("%d entries exported to %s", count, path)}
 	}
 }
 
@@ -245,6 +368,9 @@ func (m *model) refreshViewport() {
 	if !m.ready {
 		return
 	}
+	lh := m.listHeight()
+	m.viewport.Width = m.rightWidth()
+	m.viewport.Height = lh
 	m.viewport.SetContent(m.buildDetailContent())
 }
 
