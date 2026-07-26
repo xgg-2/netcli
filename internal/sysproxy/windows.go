@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	ctrlCEvent        uint32  = 0
-	ctrlBreakEvent    uint32  = 1
-	ctrlCloseEvent    uint32  = 2
-	ctrlLogoffEvent   uint32  = 5
-	ctrlShutdownEvent uint32  = 6
+	ctrlCEvent         uint32  = 0
+	ctrlBreakEvent     uint32  = 1
+	ctrlCloseEvent     uint32  = 2
+	ctrlLogoffEvent    uint32  = 5
+	ctrlShutdownEvent  uint32  = 6
 	optSettingsChanged uintptr = 39
 	optRefresh         uintptr = 37
 )
@@ -23,8 +23,11 @@ const (
 const regPath = `Software\Microsoft\Windows\CurrentVersion\Internet Settings`
 
 var (
-	wininet              = windows.NewLazySystemDLL("wininet.dll")
+	wininet               = windows.NewLazySystemDLL("wininet.dll")
 	procInternetSetOption = wininet.NewProc("InternetSetOptionW")
+
+	kernel32                  = windows.NewLazySystemDLL("kernel32.dll")
+	procSetConsoleCtrlHandler = kernel32.NewProc("SetConsoleCtrlHandler")
 
 	savedEnable uint64
 	savedServer string
@@ -98,5 +101,9 @@ func RegisterCtrlHandler(restore func()) error {
 		}
 		return 0
 	})
-	return windows.SetConsoleCtrlHandler(handler, true)
+	ret, _, err := procSetConsoleCtrlHandler.Call(handler, 1)
+	if ret == 0 {
+		return fmt.Errorf("SetConsoleCtrlHandler: %w", err)
+	}
+	return nil
 }
